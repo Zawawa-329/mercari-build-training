@@ -22,7 +22,7 @@ type Server struct {
 }
 
 type Items struct {
-    Items []Item `json:"items"`
+    Items []*Item `json:"items"`
 }
 
 // Run is a method to start the server.
@@ -159,7 +159,7 @@ func (s *Handlers) AddItem(w http.ResponseWriter, r *http.Request) {
         return
     }
 
-	items, err := s.getItemsFromJSON() // アイテムリストを取得
+	items, err := s.itemRepo.LoadItems() // アイテムリストを取得
     if err != nil {
         http.Error(w, err.Error(), http.StatusInternalServerError)
         return
@@ -179,7 +179,7 @@ func (s *Handlers) AddItem(w http.ResponseWriter, r *http.Request) {
 // GetItems は登録された商品一覧を返すエンドポイントです。
 func (s *Handlers) GetItems(w http.ResponseWriter, r *http.Request) {
     // items.json からアイテムリストを取得
-    items, err := s.getItemsFromJSON()
+    items, err := s.itemRepo.LoadItems()
     if err != nil {
         slog.Error("failed to get items from JSON", "error", err)
         http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -193,28 +193,6 @@ func (s *Handlers) GetItems(w http.ResponseWriter, r *http.Request) {
 
     w.Header().Set("Content-Type", "application/json")
     json.NewEncoder(w).Encode(resp)
-}
-
-
-// getItemsFromJSON は items.json からアイテムのリストを読み込む関数です。
-func (s *Handlers) getItemsFromJSON() (Items, error) {
-    // items.json ファイルを開く
-    filePath := "items.json"
-    file, err := os.Open(filePath)
-    if err != nil {
-        return Items{}, fmt.Errorf("failed to open items.json: %w", err)
-    }
-    defer file.Close()
-
-    // items.jsonの内容を読み込む
-    var items Items
-    decoder := json.NewDecoder(file)
-    err = decoder.Decode(&items)
-    if err != nil && err.Error() != "EOF" {
-        return Items{}, fmt.Errorf("failed to decode items.json: %w", err)
-    }
-
-    return items, nil
 }
 
 
@@ -397,7 +375,7 @@ func (s *Handlers) GetItem(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// items.json からアイテムリストを取得
-	items, err := s.getItemsFromJSON()
+	items, err := s.itemRepo.LoadItems()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
