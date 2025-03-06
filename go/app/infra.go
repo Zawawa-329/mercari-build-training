@@ -40,7 +40,7 @@ func NewItemRepository() ItemRepository {
 // Insert inserts an item into the repository.
 func (i *itemRepository) Insert(ctx context.Context, item *Item) error {
     // 現在のアイテムリストを読み込む
-    items, err := i.loadItems()
+    items, err := i.LoadItems()
     if err != nil {
         return fmt.Errorf("failed to load items: %w", err)
     }
@@ -48,7 +48,7 @@ func (i *itemRepository) Insert(ctx context.Context, item *Item) error {
 	items.Items = append(items.Items, *item)
 
     // items.jsonを開いて新しいアイテムリストを書き込む
-    file, err := os.Create(i.fileName)
+    file, err := os.OpenFile(i.fileName, os.O_RDWR|os.O_CREATE, 0644)
     if err != nil {
         return fmt.Errorf("failed to create items.json: %w", err)
     }
