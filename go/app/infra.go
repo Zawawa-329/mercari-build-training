@@ -24,6 +24,7 @@ type Item struct {
 //go:generate go run go.uber.org/mock/mockgen -source=$GOFILE -package=${GOPACKAGE} -destination=./mock_$GOFILE
 type ItemRepository interface {
 	Insert(ctx context.Context, item *Item) error
+    LoadItems() (*Items, error)
 }
 
 // itemRepository is an implementation of ItemRepository
@@ -45,7 +46,7 @@ func (i *itemRepository) Insert(ctx context.Context, item *Item) error {
         return fmt.Errorf("failed to load items: %w", err)
     }
 	// 新しいアイテムを追加
-	items.Items = append(items.Items, *item)
+	items.Items = append(items.Items, item)
 
     // items.jsonを開いて新しいアイテムリストを書き込む
     file, err := os.OpenFile(i.fileName, os.O_RDWR|os.O_CREATE, 0644)
