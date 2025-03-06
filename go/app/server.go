@@ -197,7 +197,6 @@ func (s *Handlers) GetItems(w http.ResponseWriter, r *http.Request) {
 
 
 // getItemsFromJSON は items.json からアイテムのリストを読み込む関数です。
-// getItemsFromJSON は items.json からアイテムのリストを読み込む関数です。
 func (s *Handlers) getItemsFromJSON() (Items, error) {
     // items.json ファイルを開く
     filePath := "items.json"
@@ -329,7 +328,7 @@ func (s *Handlers) GetImage(w http.ResponseWriter, r *http.Request) {
 
 
 // loadItems は items.json からアイテムリストを読み込むメソッドです。
-func (i *itemRepository) loadItems() (*Items, error) {
+func (i *itemRepository) LoadItems() (*Items, error) {
     // items.json ファイルを開く
     file, err := os.Open(i.fileName)
     if err != nil {
@@ -390,7 +389,7 @@ type GetItemResponse struct {
 // GetItem は指定された ID のアイテムを取得するエンドポイント
 func (s *Handlers) GetItem(w http.ResponseWriter, r *http.Request) {
 	// item_id を URL から取得
-	idStr := r.URL.Path[len("/items/"):] // "/items/" の後ろが item_id
+	idStr := r.PathValue("item_id") // "/items/" の後ろが item_id
 	id, err := strconv.Atoi(idStr) // 文字列を整数に変換
 	if err != nil {
 		http.Error(w, "invalid item_id", http.StatusBadRequest)
