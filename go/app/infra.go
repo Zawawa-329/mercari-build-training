@@ -49,6 +49,7 @@ func setupDatabase() (*sql.DB, error) {
 type ItemRepository interface {
 	Insert(ctx context.Context, item *Item) error
     LoadItems() ([]*Item, error)
+	SearchItemsByName(keyword string) ([]*Item, error)
 }
 
 // itemRepository is an implementation of ItemRepository
