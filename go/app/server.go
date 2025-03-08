@@ -28,36 +28,36 @@ type Items struct {
 // Run is a method to start the server.
 // This method returns 0 if the server started successfully, and 1 otherwise.
 func (s Server) Run() int {
-	// set up logger
+	// ロガーの設定
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
 	slog.SetDefault(logger)
-	// STEP 4-6: set the log level to DEBUG
-	slog.SetLogLoggerLevel(slog.LevelInfo)
 
-	// set up CORS settings
 	frontURL, found := os.LookupEnv("FRONT_URL")
 	if !found {
 		frontURL = "http://localhost:3000"
 	}
 
-	// STEP 5-1: set up the database connection
+	// データベースのセットアップ
+	db, err := setupDatabase()
+	if err != nil {
+		slog.Error("failed to setup database", "error", err)
+		return 1
+	}
 
-	// set up handlers
-	itemRepo := NewItemRepository()
+	// アイテムリポジトリの作成
+	itemRepo := NewItemRepository(db)
 	h := &Handlers{imgDirPath: s.ImageDirPath, itemRepo: itemRepo}
 
-	// set up routes
+	// ルーティングの設定
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /", h.Hello)
 	mux.HandleFunc("GET /items", h.GetItems)
 	mux.HandleFunc("POST /items", h.AddItem)
 	mux.HandleFunc("GET /images/{filename}", h.GetImage)
-	mux.HandleFunc("GET /items/{item_id}", h.GetItem) // ID 指定の取得
+	mux.HandleFunc("GET /items/{item_id}", h.GetItem)
 
-
-	// start the server
-	slog.Info("http server started on", "port", s.Port)
-	err := http.ListenAndServe(":"+s.Port, simpleCORSMiddleware(simpleLoggerMiddleware(mux), frontURL, []string{"GET", "HEAD", "POST", "OPTIONS"}))
+	// サーバ起動
+	err = http.ListenAndServe(":"+s.Port, simpleCORSMiddleware(simpleLoggerMiddleware(mux), frontURL, []string{"GET", "HEAD", "POST", "OPTIONS"}))
 	if err != nil {
 		slog.Error("failed to start server: ", "error", err)
 		return 1
@@ -65,7 +65,6 @@ func (s Server) Run() int {
 
 	return 0
 }
-
 type Handlers struct {
 	// imgDirPath is the path to the directory storing images.
 	imgDirPath string
@@ -130,69 +129,67 @@ func parseAddItemRequest(r *http.Request) (*AddItemRequest, error) {
 }
 
 
-// AddItem is a handler to add a new item for POST /items .
 func (s *Handlers) AddItem(w http.ResponseWriter, r *http.Request) {
-    ctx := r.Context()
+	ctx := r.Context()
 
-    req, err := parseAddItemRequest(r)
-    if err != nil {
-        http.Error(w, err.Error(), http.StatusBadRequest)
-        return
-    }
+	req, err := parseAddItemRequest(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 
-    fileName, err := s.storeImage(req.Image)
-    if err != nil {
-        slog.Error("failed to store image: ", "error", err)
-        http.Error(w, err.Error(), http.StatusInternalServerError)
-        return
-    }
-    item := &Item{
-        Name: req.Name,
-        Category: req.Category,
-        ImageFileName: fileName, // ここを修正
-    }
+	// 画像を保存してファイル名を取得
+	fileName, err := s.storeImage(req.Image)
+	if err != nil {
+		slog.Error("failed to store image: ", "error", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 
-    err = s.itemRepo.Insert(ctx, item) // `items.json` に保存
-    if err != nil {
-        slog.Error("failed to store item: ", "error", err)
-        http.Error(w, err.Error(), http.StatusInternalServerError)
-        return
-    }
+	item := &Item{
+		Name:          req.Name,
+		Category:      req.Category,
+		ImageFileName: fileName,
+	}
 
-	items, err := s.itemRepo.LoadItems() // アイテムリストを取得
-    if err != nil {
-        http.Error(w, err.Error(), http.StatusInternalServerError)
-        return
-    }
+	// アイテムをデータベースに挿入
+	err = s.itemRepo.Insert(ctx, item)
+	if err != nil {
+		slog.Error("failed to store item: ", "error", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 
-    // 正しく JSON レスポンスを返す
+	// アイテム一覧を取得
+	items, err := s.itemRepo.LoadItems()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
 	resp := map[string]interface{}{
-        "items": items.Items, // アイテムリストを items フィールドに格納
-    }
+		"items": items,
+	}
 
-    w.Header().Set("Content-Type", "application/json")
-    json.NewEncoder(w).Encode(resp)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
 }
 
 
-// Handlers に GetItems メソッドを追加
-// GetItems は登録された商品一覧を返すエンドポイントです。
 func (s *Handlers) GetItems(w http.ResponseWriter, r *http.Request) {
-    // items.json からアイテムリストを取得
-    items, err := s.itemRepo.LoadItems()
-    if err != nil {
-        slog.Error("failed to get items from JSON", "error", err)
-        http.Error(w, err.Error(), http.StatusInternalServerError)
-        return
-    }
+	items, err := s.itemRepo.LoadItems()
+	if err != nil {
+		slog.Error("failed to get items from DB", "error", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 
-    resp := map[string]interface{}{
-        "items": items.Items, // アイテムリストを items フィールドに格納
-    }
+	resp := map[string]interface{}{
+		"items": items,
+	}
 
-
-    w.Header().Set("Content-Type", "application/json")
-    json.NewEncoder(w).Encode(resp)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
 }
 
 
@@ -306,26 +303,28 @@ func (s *Handlers) GetImage(w http.ResponseWriter, r *http.Request) {
 
 
 // loadItems は items.json からアイテムリストを読み込むメソッドです。
-func (i *itemRepository) LoadItems() (*Items, error) {
-    // items.json ファイルを開く
-    file, err := os.Open(i.fileName)
-    if err != nil {
-        if os.IsNotExist(err) {
-            // ファイルが存在しない場合は空のリストを返す
-            return &Items{}, nil
-        }
-        return nil, fmt.Errorf("failed to open items.json: %w", err)
-    }
-    defer file.Close()
+func (r *itemRepository) LoadItems() ([]*Item, error) {
+	query := `SELECT id, name, category, image_name FROM items`
+	rows, err := r.db.Query(query)
+	if err != nil {
+		return nil, fmt.Errorf("アイテムの取得に失敗しました: %w", err)
+	}
+	defer rows.Close()
 
-    var items Items
-    decoder := json.NewDecoder(file)
-    err = decoder.Decode(&items)
-    if err != nil && err.Error() != "EOF" {
-        return nil, fmt.Errorf("failed to decode items.json: %w", err)
-    }
+	var items []*Item
+	for rows.Next() {
+		var item Item
+		if err := rows.Scan(&item.ID, &item.Name, &item.Category, &item.ImageFileName); err != nil {
+			return nil, fmt.Errorf("アイテムのスキャンに失敗しました: %w", err)
+		}
+		items = append(items, &item)
+	}
 
-    return &items, nil
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("アイテムの読み込み中にエラーが発生しました: %w", err)
+	}
+
+	return items, nil
 }
 
 
@@ -359,6 +358,7 @@ func (s *Handlers) buildImagePath(imageFileName string) (string, error) {
 }
 // GetItem は指定された ID のアイテムを取得するエンドポイント
 type GetItemResponse struct {
+	ID         int    `json:"id"`
 	Name       string `json:"name"`
 	Category   string `json:"category"`
 	ImageName  string `json:"image_name"`
@@ -382,16 +382,17 @@ func (s *Handlers) GetItem(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// item_id 番目のアイテムを探す
-	if id < 1 || id > len(items.Items) {
+	if id < 1 || id > len(items) {
 		http.Error(w, "item not found", http.StatusNotFound)
 		return
 	}
 
 	// ID 番目のアイテムを取得
-	item := items.Items[id-1]
+	item := items[id-1]
 
 	// アイテムの詳細を JSON で返す
 	resp := GetItemResponse{
+		ID:        item.ID,
 		Name:      item.Name,
 		Category:  item.Category,
 		ImageName: item.ImageFileName, // 画像ファイル名を返す
