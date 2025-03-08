@@ -55,6 +55,7 @@ func (s Server) Run() int {
 	mux.HandleFunc("POST /items", h.AddItem)
 	mux.HandleFunc("GET /images/{filename}", h.GetImage)
 	mux.HandleFunc("GET /items/{item_id}", h.GetItem)
+	mux.HandleFunc("GET /search",h.SearchItems)
 
 	// サーバ起動
 	err = http.ListenAndServe(":"+s.Port, simpleCORSMiddleware(simpleLoggerMiddleware(mux), frontURL, []string{"GET", "HEAD", "POST", "OPTIONS"}))
@@ -301,13 +302,11 @@ func (s *Handlers) GetImage(w http.ResponseWriter, r *http.Request) {
 }
 
 
-
-// loadItems は items.json からアイテムリストを読み込むメソッドです。
 func (r *itemRepository) LoadItems() ([]*Item, error) {
 	query := `SELECT id, name, category, image_name FROM items`
 	rows, err := r.db.Query(query)
 	if err != nil {
-		return nil, fmt.Errorf("アイテムの取得に失敗しました: %w", err)
+		return nil, fmt.Errorf("Failed to retrieve items: %w", err)
 	}
 	defer rows.Close()
 
@@ -315,17 +314,18 @@ func (r *itemRepository) LoadItems() ([]*Item, error) {
 	for rows.Next() {
 		var item Item
 		if err := rows.Scan(&item.ID, &item.Name, &item.Category, &item.ImageFileName); err != nil {
-			return nil, fmt.Errorf("アイテムのスキャンに失敗しました: %w", err)
+			return nil, fmt.Errorf("Failed to scan item: %w", err)
 		}
 		items = append(items, &item)
 	}
 
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("アイテムの読み込み中にエラーが発生しました: %w", err)
+		return nil, fmt.Errorf("Error occurred while loading items: %w", err)
 	}
 
 	return items, nil
 }
+
 
 
 
@@ -374,7 +374,6 @@ func (s *Handlers) GetItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// items.json からアイテムリストを取得
 	items, err := s.itemRepo.LoadItems()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -398,6 +397,62 @@ func (s *Handlers) GetItem(w http.ResponseWriter, r *http.Request) {
 		ImageName: item.ImageFileName, // 画像ファイル名を返す
 	}
 
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+// ItemRepositoryにSearchItemsByNameメソッドを追加
+func (r *itemRepository) SearchItemsByName(keyword string) ([]*Item, error) {
+	// SQLクエリでLIKEを使用して部分一致検索
+	query := `SELECT id, name, category, image_name FROM items WHERE name LIKE ?`
+	likeKeyword := "%" + strings.ToLower(keyword) + "%"
+
+	rows, err := r.db.Query(query, likeKeyword)
+	if err != nil {
+		return nil, fmt.Errorf("Failed to retrieve items: %w", err)
+	}
+	defer rows.Close()
+
+	var items []*Item
+	for rows.Next() {
+		var item Item
+		if err := rows.Scan(&item.ID, &item.Name, &item.Category, &item.ImageFileName); err != nil {
+			return nil, fmt.Errorf("Failed to scan item: %w", err)
+		}
+		items = append(items, &item)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("Error occurred while loading items: %w", err)
+	}
+
+	return items, nil
+}
+
+// SearchItemsはGET /searchエンドポイントのハンドラー
+func (s *Handlers) SearchItems(w http.ResponseWriter, r *http.Request) {
+	// クエリパラメータからキーワードを取得
+	keyword := r.URL.Query().Get("keyword")
+	if keyword == "" {
+		http.Error(w, "キーワードのクエリパラメータが必要です", http.StatusBadRequest)
+		return
+	}
+
+	// アイテムをキーワードで検索
+	items, err := s.itemRepo.SearchItemsByName(keyword)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// レスポンス構造体を作成
+	resp := map[string]interface{}{
+		"items": items,
+	}
+
+	// JSONとしてレスポンスを返す
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
