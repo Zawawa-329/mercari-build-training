@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"strconv" 
+	"context"
 )
 
 type Server struct {
@@ -28,7 +29,7 @@ type Items struct {
 // Run is a method to start the server.
 // This method returns 0 if the server started successfully, and 1 otherwise.
 func (s Server) Run() int {
-	// ロガーの設定
+	// set up logger
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
 	slog.SetDefault(logger)
 
@@ -37,18 +38,17 @@ func (s Server) Run() int {
 		frontURL = "http://localhost:3000"
 	}
 
-	// データベースのセットアップ
-	db, err := setupDatabase()
+	// STEP 5-1: set up the database connection
+	
+	itemRepo, err := NewItemRepository()
 	if err != nil {
-		slog.Error("failed to setup database", "error", err)
+		slog.Error("failed to create item repository", "error", err)
 		return 1
 	}
 
-	// アイテムリポジトリの作成
-	itemRepo := NewItemRepository(db)
 	h := &Handlers{imgDirPath: s.ImageDirPath, itemRepo: itemRepo}
 
-	// ルーティングの設定
+	// set up routes
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /", h.Hello)
 	mux.HandleFunc("GET /items", h.GetItems)
@@ -57,7 +57,7 @@ func (s Server) Run() int {
 	mux.HandleFunc("GET /items/{item_id}", h.GetItem)
 	mux.HandleFunc("GET /search",h.SearchItems)
 
-	// サーバ起動
+	// start the server
 	err = http.ListenAndServe(":"+s.Port, simpleCORSMiddleware(simpleLoggerMiddleware(mux), frontURL, []string{"GET", "HEAD", "POST", "OPTIONS"}))
 	if err != nil {
 		slog.Error("failed to start server: ", "error", err)
@@ -86,12 +86,10 @@ func (s *Handlers) Hello(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-
-
 type AddItemRequest struct {
-	Name string `form:"name"`
-	Category string `form:"category`
-	Image []byte
+	Name			string `form:"name"`
+	Category	 	string `json:"category"`
+	Image 			[]byte
 }
 
 type AddItemResponse struct {
@@ -100,85 +98,77 @@ type AddItemResponse struct {
 
 // parseAddItemRequest parses and validates the request to add an item.
 func parseAddItemRequest(r *http.Request) (*AddItemRequest, error) {
-	req := &AddItemRequest{
-		Name: r.FormValue("name"),
+    req := &AddItemRequest{
+        Name: r.FormValue("name"),
 		Category: r.FormValue("category"),
-	}
-	// STEP 4-4: add an image field
+    }
 
-	// validate the request
-	if req.Name == "" {
-		return nil, errors.New("name is required")
-	}
+    // read the image
+    file, _, err := r.FormFile("image")
+    if err != nil {
+        return nil, errors.New("failed to read image file")
+    }
+    defer file.Close()
 
-	if req.Category == "" {
-		return nil, errors.New("category is required")
-	}
-	file, _, err := r.FormFile("image")
-	if err != nil {
-    	return nil, errors.New("failed to read image file")
-	}
-	defer file.Close()
+    imageData, err := io.ReadAll(file)
+    if err != nil {
+        return nil, errors.New("failed to read image data")
+    }
+    req.Image = imageData
 
-	imageData, err := io.ReadAll(file)
-	if err != nil {
-    	return nil, errors.New("failed to read image data")
-	}
-	req.Image = imageData
-
-	return req, nil
+    // input validation
+    if req.Name == "" {
+        return nil, errors.New("name is required")
+    }
+    if req.Category == "" {
+        return nil, errors.New("category_id is required")
+    }
+    return req, nil
 }
 
-
+// AddItem is a handler to add a new item for POST /items.
 func (s *Handlers) AddItem(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
+    ctx := r.Context()
 
-	req, err := parseAddItemRequest(r)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
+    req, err := parseAddItemRequest(r)
+    if err != nil {
+        http.Error(w, err.Error(), http.StatusBadRequest)
+        return
+    }
 
-	// 画像を保存してファイル名を取得
-	fileName, err := s.storeImage(req.Image)
-	if err != nil {
-		slog.Error("failed to store image: ", "error", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
+    // save the image
+    fileName, err := s.storeImage(req.Image)
+    if err != nil {
+        http.Error(w, err.Error(), http.StatusInternalServerError)
+        return
+    }
 
-	item := &Item{
-		Name:          req.Name,
-		Category:      req.Category,
-		ImageFileName: fileName,
-	}
+    // create item
+    items := &Item{
+        Name:          req.Name,
+        Category:      req.Category,
+        ImageFileName: fileName,
+    }
 
-	// アイテムをデータベースに挿入
-	err = s.itemRepo.Insert(ctx, item)
-	if err != nil {
-		slog.Error("failed to store item: ", "error", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
+    // insert into the database
+    err = s.itemRepo.Insert(ctx, items)
+    if err != nil {
+        http.Error(w, err.Error(), http.StatusInternalServerError)
+        return
+    }
 
-	// アイテム一覧を取得
-	items, err := s.itemRepo.LoadItems()
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
+    resp := map[string]interface{}{
+        "items": items,
+    }
 
-	resp := map[string]interface{}{
-		"items": items,
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+    w.Header().Set("Content-Type", "application/json")
+    json.NewEncoder(w).Encode(resp)
 }
 
 
 func (s *Handlers) GetItems(w http.ResponseWriter, r *http.Request) {
-	items, err := s.itemRepo.LoadItems()
+	ctx := r.Context()
+	items, err := s.itemRepo.LoadItems(ctx)
 	if err != nil {
 		slog.Error("failed to get items from DB", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -204,7 +194,6 @@ func createImageDir() error {
     }
     return nil
 }
-
 func ensureImageDirExists(dir string) error {
     if _, err := os.Stat(dir); os.IsNotExist(err) {
         err := os.MkdirAll(dir, os.ModePerm)
@@ -224,55 +213,42 @@ func (s *Handlers) storeImage(image []byte) (string, error) {
         return "", err
     }
     hash := sha256.Sum256(image)
-	fileName := fmt.Sprintf("%x.jpg", hash) // ハッシュを 16 進数文字列に変換
-
+	fileName := fmt.Sprintf("%x.jpg", hash)
     filePath := filepath.Join(s.imgDirPath, fileName)
-
-    // ハッシュ化された画像ファイル名を作成
-    //hash.Write(image)  // imageをハッシュ化する
+    // Create hashed image file name
+    //hash.Write(image)  // Hash the image
     //hashValue := hash.Sum256(nil)
     //hashedFileName := fmt.Sprintf("%s.jpg", hex.EncodeToString(hashValue))
-
-    // 保存先のパスを作成
+    // Create the save path
     //filePath = filepath.Join(s.imgDirPath, hashedFileName)
-
-    // ファイルを保存
+    // Save the file
     outFile, err := os.Create(filePath)
     if err != nil {
         return "", fmt.Errorf("failed to create image file: %w", err)
     }
     defer outFile.Close()
-
-    // 画像データを書き込む
+	// Write the image data
     _, err = outFile.Write(image)
     if err != nil {
         return "", fmt.Errorf("failed to save image: %w", err)
     }
-
 	slog.Info("image saved to", "path", filePath)
-
     return fileName, nil
 }
-
-
 type GetImageRequest struct {
 	FileName string // path value
 }
-
 // parseGetImageRequest parses and validates the request to get an image.
 func parseGetImageRequest(r *http.Request) (*GetImageRequest, error) {
 	req := &GetImageRequest{
 		FileName: r.PathValue("filename"), // from path parameter
 	}
-
 	// validate the request
 	if req.FileName == "" {
 		return nil, errors.New("filename is required")
 	}
-
 	return req, nil
 }
-
 // GetImage is a handler to return an image for GET /images/{filename} .
 // If the specified image is not found, it returns the default image.
 func (s *Handlers) GetImage(w http.ResponseWriter, r *http.Request) {
@@ -282,7 +258,6 @@ func (s *Handlers) GetImage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-
 	imgPath, err := s.buildImagePath(req.FileName)
 	if err != nil {
 		if !errors.Is(err, errImageNotFound) {
@@ -290,21 +265,22 @@ func (s *Handlers) GetImage(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-
 		slog.Debug("image not found", "filename", req.FileName)
-
-		// デフォルト画像を返す
+		// return the default image
 		imgPath = filepath.Join(s.imgDirPath, "default.jpg")
 	}
-
 	slog.Info("returned image", "path", imgPath)
 	http.ServeFile(w, r, imgPath)
 }
 
 
-func (r *itemRepository) LoadItems() ([]*Item, error) {
-	query := `SELECT id, name, category, image_name FROM items`
-	rows, err := r.db.Query(query)
+func (r *itemRepository) LoadItems(ctx context.Context) ([]*Item, error) {
+	query := `
+		SELECT items.id, items.name, categories.name, items.image_name 
+        FROM items 
+        JOIN categories ON items.category_id = categories.id
+		`
+	rows, err := r.db.QueryContext(ctx,query)
 	if err != nil {
 		return nil, fmt.Errorf("Failed to retrieve items: %w", err)
 	}
@@ -332,81 +308,75 @@ func (r *itemRepository) LoadItems() ([]*Item, error) {
 // buildImagePath builds the image path and validates it.
 func (s *Handlers) buildImagePath(imageFileName string) (string, error) {
 	imgPath := filepath.Join(s.imgDirPath, filepath.Clean(imageFileName))
-
 	// to prevent directory traversal attacks
 	rel, err := filepath.Rel(s.imgDirPath, imgPath)
 	if err != nil || strings.HasPrefix(rel, "..") {
 		return "", fmt.Errorf("invalid image path: %s", imgPath)
 	}
-
 	// validate the image suffix
 	if !strings.HasSuffix(imgPath, ".jpg") && !strings.HasSuffix(imgPath, ".jpeg") {
 		return "", fmt.Errorf("image path does not end with .jpg or .jpeg: %s", imgPath)
 	}
-
 	_, err = os.Stat(imgPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			// 画像が見つからなかった場合にログを出力
+			// log when the image is not found
 			slog.Info("Image not found: ", "path", imgPath)
 			return filepath.Join(s.imgDirPath, "default.jpg"), nil  // Default image path
 		}
 		return "", errImageNotFound
 	}
-
 	return imgPath, nil
 }
-// GetItem は指定された ID のアイテムを取得するエンドポイント
-type GetItemResponse struct {
-	ID         int    `json:"id"`
-	Name       string `json:"name"`
-	Category   string `json:"category"`
-	ImageName  string `json:"image_name"`
-}
 
-// GetItem は指定された ID のアイテムを取得するエンドポイント
 func (s *Handlers) GetItem(w http.ResponseWriter, r *http.Request) {
-	// item_id を URL から取得
-	idStr := r.PathValue("item_id") // "/items/" の後ろが item_id
-	id, err := strconv.Atoi(idStr) // 文字列を整数に変換
-	if err != nil {
-		http.Error(w, "invalid item_id", http.StatusBadRequest)
-		return
-	}
+	ctx := r.Context()
+	// Get item_id from URL
+    idStr := r.PathValue("item_id")
+    id, err := strconv.Atoi(idStr) 
+    if err != nil {
+        http.Error(w, "invalid item_id", http.StatusBadRequest)
+        return
+    }
+	slog.Info("Received item_id:", "item_id", id)
 
-	items, err := s.itemRepo.LoadItems()
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
+   // Get item and category name
+    items, err := s.itemRepo.LoadItems(ctx)
+    if err != nil {
+        if err.Error() == "item not found" {
+            http.Error(w, "item not found", http.StatusNotFound)
+        } else {
+            http.Error(w, err.Error(), http.StatusInternalServerError)
+        }
+        return
+    }
 
-	// item_id 番目のアイテムを探す
-	if id < 1 || id > len(items) {
-		http.Error(w, "item not found", http.StatusNotFound)
-		return
-	}
-
-	// ID 番目のアイテムを取得
-	item := items[id-1]
-
-	// アイテムの詳細を JSON で返す
-	resp := GetItemResponse{
-		ID:        item.ID,
-		Name:      item.Name,
-		Category:  item.Category,
-		ImageName: item.ImageFileName, // 画像ファイル名を返す
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(resp); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+    if len(items) > 0 {
+		item := items[0] 
+	
+		resp := Item{
+			ID:             item.ID,
+			Name:           item.Name,
+			Category:       item.Category,
+			ImageFileName:  item.ImageFileName,
+		}
+	
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(resp); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+	} else {
+		http.Error(w, "Item not found", http.StatusNotFound)
 	}
 }
 
-// ItemRepositoryにSearchItemsByNameメソッドを追加
+// ItemRepository adds the SearchItemsByName method
 func (r *itemRepository) SearchItemsByName(keyword string) ([]*Item, error) {
-	// SQLクエリでLIKEを使用して部分一致検索
-	query := `SELECT id, name, category, image_name FROM items WHERE name LIKE ?`
+	// SQL query using LIKE for partial match search
+	query := ` SELECT items.id, items.name, categories.name, items.image_name 
+        FROM items 
+        JOIN categories ON items.category_id = categories.id
+        WHERE LOWER(items.name) LIKE LOWER(?)`
 	likeKeyword := "%" + strings.ToLower(keyword) + "%"
 
 	rows, err := r.db.Query(query, likeKeyword)
@@ -431,28 +401,28 @@ func (r *itemRepository) SearchItemsByName(keyword string) ([]*Item, error) {
 	return items, nil
 }
 
-// SearchItemsはGET /searchエンドポイントのハンドラー
+// SearchItems is the handler for the GET /search endpoint
 func (s *Handlers) SearchItems(w http.ResponseWriter, r *http.Request) {
-	// クエリパラメータからキーワードを取得
+	//  Get keyword from query parameter
 	keyword := r.URL.Query().Get("keyword")
 	if keyword == "" {
-		http.Error(w, "キーワードのクエリパラメータが必要です", http.StatusBadRequest)
+		http.Error(w, "Keyword query parameter is required", http.StatusBadRequest)
 		return
 	}
 
-	// アイテムをキーワードで検索
+	// Search items by keyword
 	items, err := s.itemRepo.SearchItemsByName(keyword)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	// レスポンス構造体を作成
+	// Create response structure
 	resp := map[string]interface{}{
 		"items": items,
 	}
 
-	// JSONとしてレスポンスを返す
+	// Return the response as JSON
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
