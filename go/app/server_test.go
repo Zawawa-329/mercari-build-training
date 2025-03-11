@@ -10,9 +10,14 @@ import (
 	"bytes"
 	"mime/multipart"
 	"errors"
+	"database/sql"
+	//"io"
+	"fmt"
+	
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/golang/mock/gomock" 
+	_ "github.com/mattn/go-sqlite3"
 )
 
 func TestParseAddItemRequest(t *testing.T) {
@@ -309,123 +314,231 @@ func TestAddItem(t *testing.T) {
         })
     }
 }
+func TestAddItemE2e(t *testing.T) {
+    if testing.Short() {
+        t.Skip("skipping e2e test")
+    }
+
+    db, closers, err := setupDB(t)
+    if err != nil {
+        t.Fatalf("failed to set up database: %v", err)
+    }
+    t.Cleanup(func() {
+        for _, c := range closers {
+            c()
+        }
+    })
+
+    // 画像ファイルを読み込む
+    imageBytes, err := os.ReadFile("/home/saway/mercari-build-training/go/images/default.jpg")
+    if err != nil {
+        t.Fatalf("failed to read image file: %v", err)
+    }
+
+    // Test for image directory creation
+    imgDirPath := "./images" // 画像保存先のディレクトリ
+    if err := createImageDir(); err != nil {
+        t.Fatalf("failed to create image directory: %v", err)
+    }
+
+    // カテゴリIDの取得またはカテゴリの挿入
+    var categoryId int64 // ここを int64 に変更
+    query := `SELECT id FROM categories WHERE name = ?`
+    err = db.QueryRow(query, "phone").Scan(&categoryId)
+
+    if err != nil {
+        if err == sql.ErrNoRows {
+            // カテゴリがない場合は挿入
+            insertCategoryQuery := `INSERT INTO categories (name) VALUES (?)`
+            res, err := db.Exec(insertCategoryQuery, "phone")
+            if err != nil {
+                t.Fatalf("failed to insert category: %v", err)
+            }
+            // 挿入後のカテゴリIDを取得
+            categoryId, err = res.LastInsertId()
+            if err != nil {
+                t.Fatalf("failed to get category id after insert: %v", err)
+            }
+        } else {
+            t.Fatalf("failed to get category id: %v", err)
+        }
+    }
+
+    // Test cases
+    type wants struct {
+        code int
+    }
+    cases := map[string]struct {
+        args map[string]string
+        imageData []byte
+        wants
+    }{
+        "ok: correctly inserted": {
+            args: map[string]string{
+                "name":     "used iPhone 16e",
+                "category": "phone", // 画像名も送信
+            },
+            imageData: imageBytes,
+            wants: wants{
+                code: http.StatusOK,
+            },
+        },
+        "ng: failed to insert": {
+            args: map[string]string{
+                "name":     "",
+                "category": "phone",
+            },
+            imageData: imageBytes,
+            wants: wants{
+                code: http.StatusBadRequest,
+            },
+        },
+    }
+
+    for name, tt := range cases {
+        t.Run(name, func(t *testing.T) {
+            h := &Handlers{itemRepo: &itemRepository{db: db}, imgDirPath: imgDirPath} // imgDirPathを渡す
+
+            // Create a multipart form request
+            body := &bytes.Buffer{}
+            writer := multipart.NewWriter(body)
+
+            // Add the text fields
+            err := writer.WriteField("name", tt.args["name"])
+            if err != nil {
+                t.Fatalf("failed to write name field: %v", err)
+            }
+            err = writer.WriteField("category", tt.args["category"])
+            if err != nil {
+                t.Fatalf("failed to write category field: %v", err)
+            }
+
+            // Add the image field
+            filePart, err := writer.CreateFormFile("image", "default.jpg")
+            if err != nil {
+                t.Fatalf("failed to create form file: %v", err)
+            }
+            _, err = filePart.Write(tt.imageData)
+            if err != nil {
+                t.Fatalf("failed to write image data: %v", err)
+            }
+
+            // Close the writer to finalize the form
+            err = writer.Close()
+            if err != nil {
+                t.Fatalf("failed to close multipart writer: %v", err)
+            }
+
+            // Send the request
+            req := httptest.NewRequest("POST", "/items", body)
+            req.Header.Set("Content-Type", writer.FormDataContentType())
+
+            // 必要ならフォームの内容を解析
+            err = req.ParseForm()
+            if err != nil {
+                t.Fatalf("failed to parse form data: %v", err)
+            }
+
+            // category_idを設定
+            req.Form.Set("category_id", fmt.Sprintf("%d", categoryId)) // category_idを設定
+			req.Form.Set("name", tt.args["name"]) // name を動的に設定
+
+            rr := httptest.NewRecorder()
+
+            h.AddItem(rr, req)
+
+            // レスポンスの確認
+            if tt.wants.code != rr.Code {
+				t.Errorf("expected status code %d, got %d", tt.wants.code, rr.Code)
+			}
+			if tt.wants.code >= 400 {
+				return
+			}
+			
+			var item Item
+			query := `
+				SELECT items.id, items.name, items.category_id, items.image_name
+				FROM items 
+				WHERE LOWER(items.name) LIKE LOWER(?)`
+			
+			row := db.QueryRow(query, tt.args["name"])
+			err = row.Scan(&item.ID, &item.Name, &item.Category, &item.ImageFileName)
+			if err != nil {
+				t.Fatalf("failed to query inserted item: %v", err)
+			}
+			
+			var categoryName string
+			categoryQuery := `SELECT name FROM categories WHERE id = ?`
+			err = db.QueryRow(categoryQuery, item.Category).Scan(&categoryName)
+			if err != nil {
+				t.Fatalf("failed to get category name: %v", err)
+			}
+			
+			if categoryName != tt.args["category"] {
+				t.Errorf("expected category name %s, got %s", tt.args["category"], categoryName)
+			}
+			
+			if item.Name != tt.args["name"] {
+				t.Errorf("expected name %s, got %s", tt.args["name"], item.Name)
+			}
+			
+			if item.ImageFileName != "default.jpg" { // image_name を "default.jpg" に修正
+				t.Errorf("expected image_name %s, got %s", "default.jpg", item.ImageFileName)
+			}
+		})
+    }
+}
 
 
-// STEP 6-4: uncomment this test
-// func TestAddItemE2e(t *testing.T) {
-// 	if testing.Short() {
-// 		t.Skip("skipping e2e test")
-// 	}
 
-// 	db, closers, err := setupDB(t)
-// 	if err != nil {
-// 		t.Fatalf("failed to set up database: %v", err)
-// 	}
-// 	t.Cleanup(func() {
-// 		for _, c := range closers {
-// 			c()
-// 		}
-// 	})
+func setupDB(t *testing.T) (db *sql.DB, closers []func(), e error) {
+	t.Helper()
 
-// 	type wants struct {
-// 		code int
-// 	}
-// 	cases := map[string]struct {
-// 		args map[string]string
-// 		wants
-// 	}{
-// 		"ok: correctly inserted": {
-// 			args: map[string]string{
-// 				"name":     "used iPhone 16e",
-// 				"category": "phone",
-// 			},
-// 			wants: wants{
-// 				code: http.StatusOK,
-// 			},
-// 		},
-// 		"ng: failed to insert": {
-// 			args: map[string]string{
-// 				"name":     "",
-// 				"category": "phone",
-// 			},
-// 			wants: wants{
-// 				code: http.StatusBadRequest,
-// 			},
-// 		},
-// 	}
+ 	defer func() {
+ 		if e != nil {
+ 			for _, c := range closers {
+ 				c()
+ 			}
+ 		}
+ 	}()
 
-// 	for name, tt := range cases {
-// 		t.Run(name, func(t *testing.T) {
-// 			h := &Handlers{itemRepo: &itemRepository{db: db}}
+ 	// create a temporary file for e2e testing
+ 	f, err := os.CreateTemp(".", "*.sqlite3")
+ 	if err != nil {
+ 		return nil, nil, err
+ 	}
+ 	closers = append(closers, func() {
+ 		f.Close()
+ 		os.Remove(f.Name())
+ 	})
 
-// 			values := url.Values{}
-// 			for k, v := range tt.args {
-// 				values.Set(k, v)
-// 			}
-// 			req := httptest.NewRequest("POST", "/items", strings.NewReader(values.Encode()))
-// 			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+ 	// set up tables
+ 	db, err = sql.Open("sqlite3", f.Name())
+ 	if err != nil {
+ 		return nil, nil, err
+ 	}
+ 	closers = append(closers, func() {
+ 		db.Close()
+ 	})
 
-// 			rr := httptest.NewRecorder()
-// 			h.AddItem(rr, req)
+ 	// TODO: replace it with real SQL statements.
+ 	cmd :=  `
+	CREATE TABLE IF NOT EXISTS categories (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL
+	);
 
-// 			// check response
-// 			if tt.wants.code != rr.Code {
-// 				t.Errorf("expected status code %d, got %d", tt.wants.code, rr.Code)
-// 			}
-// 			if tt.wants.code >= 400 {
-// 				return
-// 			}
-// 			for _, v := range tt.args {
-// 				if !strings.Contains(rr.Body.String(), v) {
-// 					t.Errorf("response body does not contain %s, got: %s", v, rr.Body.String())
-// 				}
-// 			}
+	CREATE TABLE IF NOT EXISTS items (
+    	id INTEGER PRIMARY KEY AUTOINCREMENT,
+    	name TEXT NOT NULL,
+    	category_id INTEGER,
+    	image_name TEXT,
+    	FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE SET NULL
+	);`
+ 	_, err = db.Exec(cmd)
+ 	if err != nil {
+ 		return nil, nil, err
+ 	}
 
-// 			// STEP 6-4: check inserted data
-// 		})
-// 	}
-// }
-
-// func setupDB(t *testing.T) (db *sql.DB, closers []func(), e error) {
-// 	t.Helper()
-
-// 	defer func() {
-// 		if e != nil {
-// 			for _, c := range closers {
-// 				c()
-// 			}
-// 		}
-// 	}()
-
-// 	// create a temporary file for e2e testing
-// 	f, err := os.CreateTemp(".", "*.sqlite3")
-// 	if err != nil {
-// 		return nil, nil, err
-// 	}
-// 	closers = append(closers, func() {
-// 		f.Close()
-// 		os.Remove(f.Name())
-// 	})
-
-// 	// set up tables
-// 	db, err = sql.Open("sqlite3", f.Name())
-// 	if err != nil {
-// 		return nil, nil, err
-// 	}
-// 	closers = append(closers, func() {
-// 		db.Close()
-// 	})
-
-// 	// TODO: replace it with real SQL statements.
-// 	cmd := `CREATE TABLE IF NOT EXISTS items (
-// 		id INTEGER PRIMARY KEY AUTOINCREMENT,
-// 		name VARCHAR(255),
-// 		category VARCHAR(255)
-// 	)`
-// 	_, err = db.Exec(cmd)
-// 	if err != nil {
-// 		return nil, nil, err
-// 	}
-
-// 	return db, closers, nil
-// }
+ 	return db, closers, nil
+}
