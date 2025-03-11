@@ -12,6 +12,7 @@ import (
 	"errors"
 	"database/sql"
 	//"io"
+	"log"
 	"fmt"
 	
 
@@ -329,32 +330,30 @@ func TestAddItemE2e(t *testing.T) {
         }
     })
 
-    // 画像ファイルを読み込む
+    // 画像読み込み処理
     imageBytes, err := os.ReadFile("/home/saway/mercari-build-training/go/images/default.jpg")
     if err != nil {
         t.Fatalf("failed to read image file: %v", err)
     }
 
-    // Test for image directory creation
-    imgDirPath := "./images" // 画像保存先のディレクトリ
+    imgDirPath := "./images"
     if err := createImageDir(); err != nil {
         t.Fatalf("failed to create image directory: %v", err)
     }
 
-    // カテゴリIDの取得またはカテゴリの挿入
-    var categoryId int64 // ここを int64 に変更
+    // カテゴリIDを取得またはカテゴリを挿入
+    var categoryId int64
     query := `SELECT id FROM categories WHERE name = ?`
     err = db.QueryRow(query, "phone").Scan(&categoryId)
 
     if err != nil {
         if err == sql.ErrNoRows {
-            // カテゴリがない場合は挿入
+            // カテゴリがない場合、カテゴリを挿入
             insertCategoryQuery := `INSERT INTO categories (name) VALUES (?)`
             res, err := db.Exec(insertCategoryQuery, "phone")
             if err != nil {
                 t.Fatalf("failed to insert category: %v", err)
             }
-            // 挿入後のカテゴリIDを取得
             categoryId, err = res.LastInsertId()
             if err != nil {
                 t.Fatalf("failed to get category id after insert: %v", err)
@@ -364,7 +363,7 @@ func TestAddItemE2e(t *testing.T) {
         }
     }
 
-    // Test cases
+    // テストケースの定義
     type wants struct {
         code int
     }
@@ -376,7 +375,7 @@ func TestAddItemE2e(t *testing.T) {
         "ok: correctly inserted": {
             args: map[string]string{
                 "name":     "used iPhone 16e",
-                "category": "phone", // 画像名も送信
+                "category": "phone", // ここでカテゴリ名を送信
             },
             imageData: imageBytes,
             wants: wants{
@@ -397,23 +396,22 @@ func TestAddItemE2e(t *testing.T) {
 
     for name, tt := range cases {
         t.Run(name, func(t *testing.T) {
-            h := &Handlers{itemRepo: &itemRepository{db: db}, imgDirPath: imgDirPath} // imgDirPathを渡す
+            h := &Handlers{itemRepo: &itemRepository{db: db}, imgDirPath: imgDirPath}
 
-            // Create a multipart form request
             body := &bytes.Buffer{}
             writer := multipart.NewWriter(body)
 
-            // Add the text fields
+            // テキストフィールドの追加
             err := writer.WriteField("name", tt.args["name"])
             if err != nil {
                 t.Fatalf("failed to write name field: %v", err)
             }
-            err = writer.WriteField("category", tt.args["category"])
+            err = writer.WriteField("category", tt.args["category"]) // カテゴリ名をそのまま送信
             if err != nil {
                 t.Fatalf("failed to write category field: %v", err)
             }
 
-            // Add the image field
+            // 画像フィールドの追加
             filePart, err := writer.CreateFormFile("image", "default.jpg")
             if err != nil {
                 t.Fatalf("failed to create form file: %v", err)
@@ -423,72 +421,73 @@ func TestAddItemE2e(t *testing.T) {
                 t.Fatalf("failed to write image data: %v", err)
             }
 
-            // Close the writer to finalize the form
+            // マルチパートライターのクローズ
             err = writer.Close()
             if err != nil {
                 t.Fatalf("failed to close multipart writer: %v", err)
             }
 
-            // Send the request
+            // リクエストを作成
             req := httptest.NewRequest("POST", "/items", body)
             req.Header.Set("Content-Type", writer.FormDataContentType())
 
-            // 必要ならフォームの内容を解析
-            err = req.ParseForm()
+            // マルチパートフォームのパース
+            err = req.ParseMultipartForm(10 * 1024 * 1024) // 10MB制限
             if err != nil {
-                t.Fatalf("failed to parse form data: %v", err)
+                t.Fatalf("failed to parse multipart form data: %v", err)
             }
 
-            // category_idを設定
-            req.Form.Set("category_id", fmt.Sprintf("%d", categoryId)) // category_idを設定
-			req.Form.Set("name", tt.args["name"]) // name を動的に設定
+			req.Form.Set("category", fmt.Sprintf("%d", categoryId)) // category_idを設定
+			req.Form.Set("name", tt.args["name"])
+
+            log.Printf("Content-Type: %s", req.Header.Get("Content-Type"))
+            log.Printf("Request Body: %s", body.String())
 
             rr := httptest.NewRecorder()
 
+            // ハンドラーにリクエストを渡す
             h.AddItem(rr, req)
 
-            // レスポンスの確認
+            // レスポンスコードの確認
             if tt.wants.code != rr.Code {
-				t.Errorf("expected status code %d, got %d", tt.wants.code, rr.Code)
-			}
-			if tt.wants.code >= 400 {
-				return
-			}
-			
-			var item Item
-			query := `
-				SELECT items.id, items.name, items.category_id, items.image_name
-				FROM items 
-				WHERE LOWER(items.name) LIKE LOWER(?)`
-			
-			row := db.QueryRow(query, tt.args["name"])
-			err = row.Scan(&item.ID, &item.Name, &item.Category, &item.ImageFileName)
-			if err != nil {
-				t.Fatalf("failed to query inserted item: %v", err)
-			}
-			
-			var categoryName string
-			categoryQuery := `SELECT name FROM categories WHERE id = ?`
-			err = db.QueryRow(categoryQuery, item.Category).Scan(&categoryName)
-			if err != nil {
-				t.Fatalf("failed to get category name: %v", err)
-			}
-			
-			if categoryName != tt.args["category"] {
-				t.Errorf("expected category name %s, got %s", tt.args["category"], categoryName)
-			}
-			
-			if item.Name != tt.args["name"] {
-				t.Errorf("expected name %s, got %s", tt.args["name"], item.Name)
-			}
-			
-			if item.ImageFileName != "default.jpg" { // image_name を "default.jpg" に修正
-				t.Errorf("expected image_name %s, got %s", "default.jpg", item.ImageFileName)
-			}
-		})
+                t.Errorf("expected status code %d, got %d", tt.wants.code, rr.Code)
+            }
+            if tt.wants.code >= 400 {
+                return
+            }
+
+            // アイテムが挿入されたか確認
+            var item Item
+            query := `SELECT items.id, items.name, items.category_id, items.image_name FROM items WHERE LOWER(items.name) LIKE LOWER(?)`
+            row := db.QueryRow(query, tt.args["name"])
+            err = row.Scan(&item.ID, &item.Name, &item.Category, &item.ImageFileName)
+            if err != nil {
+                t.Fatalf("failed to query inserted item: %v", err)
+            }
+
+            // カテゴリ名の確認
+            var categoryName string
+            categoryQuery := `SELECT name FROM categories WHERE id = ?`
+            err = db.QueryRow(categoryQuery, item.Category).Scan(&categoryName)
+            if err != nil {
+                t.Fatalf("failed to get category name: %v", err)
+            }
+
+            if categoryName != tt.args["category"] {
+                t.Errorf("expected category name %s, got %s", tt.args["category"], categoryName)
+            }
+
+            // アイテムの確認
+            if item.Name != tt.args["name"] {
+                t.Errorf("expected name %s, got %s", tt.args["name"], item.Name)
+            }
+
+            if item.ImageFileName != "default.jpg" {
+                t.Errorf("expected image_name %s, got %s", "default.jpg", item.ImageFileName)
+            }
+        })
     }
 }
-
 
 
 func setupDB(t *testing.T) (db *sql.DB, closers []func(), e error) {
