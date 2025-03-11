@@ -9,9 +9,10 @@ import (
 	"os"
 	"bytes"
 	"mime/multipart"
+	"errors"
 
 	"github.com/google/go-cmp/cmp"
-	//"go.uber.org/mock/gomock"
+	"github.com/golang/mock/gomock" 
 )
 
 func TestParseAddItemRequest(t *testing.T) {
@@ -185,80 +186,130 @@ func TestHelloHandler(t *testing.T) {
 	}
 }
 
-/*func TestAddItem(t *testing.T) {
-	t.Parallel()
+func TestAddItem(t *testing.T) {
+    t.Parallel()
 
-	type wants struct {
-		code int
+	imageBytes, err := os.ReadFile("/home/saway/mercari-build-training/go/images/default.jpg")
+	if err != nil {
+    	t.Fatalf("failed to read image file: %v", err)
 	}
-	cases := map[string]struct {
-		args     map[string]string
-		injector func(m *MockItemRepository)
-		wants
-	}{
-		"ok: correctly inserted": {
-			args: map[string]string{
-				"name":     "used iPhone 16e",
-				"category": "phone",
-			},
-			injector: func(m *MockItemRepository) {
+    type wants struct {
+        code int
+    }
+    cases := map[string]struct {
+        args       map[string]string
+        imageData  []byte
+        injector   func(m *MockItemRepository)
+        wants
+    }{
+        "ok: correctly inserted": {
+            args: map[string]string{
+                "name":     "used iPhone 16e",
+                "category": "phone",
+                "image":    "default.jpg",
+            },
+            imageData: imageBytes,
+            injector: func(m *MockItemRepository) {
 				// STEP 6-3: define mock expectation
 				// succeeded to insert
+				expectedImageFileName := "a1ebfdb99c936f09c57dee11ab7fb3a27dcf3b1dd5ef107bd650345c01ee8f11.jpg"
+				expectedItem := &Item{
+					Name:          "used iPhone 16e",
+					Category:      "phone",
+					ImageFileName: expectedImageFileName,
+				}
+			
+				m.EXPECT().
+					Insert(gomock.Any(), expectedItem).
+					Return(nil).Times(1)
 			},
 			wants: wants{
-				code: http.StatusOK,
-			},
-		},
-		"ng: failed to insert": {
-			args: map[string]string{
-				"name":     "used iPhone 16e",
-				"category": "phone",
-			},
-			injector: func(m *MockItemRepository) {
+                code: http.StatusOK,
+            },
+        },
+        "ng: failed to insert": {
+            args: map[string]string{
+                "name":     "used iPhone 16e",
+                "category": "phone",
+                "image":    "default.jpg",
+            },
+            imageData: imageBytes,
+            injector: func(m *MockItemRepository) {
 				// STEP 6-3: define mock expectation
 				// failed to insert
+				expectedImageFileName := "a1ebfdb99c936f09c57dee11ab7fb3a27dcf3b1dd5ef107bd650345c01ee8f11.jpg"
+				expectedItem := &Item{
+					Name:          "used iPhone 16e",
+					Category:      "phone",
+					ImageFileName: expectedImageFileName,  // 画像ファイル名を使用
+				}
+			
+				m.EXPECT().
+					Insert(gomock.Any(), expectedItem).   // アイテム挿入
+					Return(errors.New("insert failed")).Times(1)  // アイテム挿入が正常に行われる
 			},
-			wants: wants{
-				code: http.StatusInternalServerError,
-			},
-		},
-	}
+            wants: wants{
+                code: http.StatusInternalServerError,
+            },
+        },
+    }
 
-	for name, tt := range cases {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
+    for name, tt := range cases {
+        t.Run(name, func(t *testing.T) {
+            t.Parallel()
 
-			ctrl := gomock.NewController(t)
-
-			mockIR := NewMockItemRepository(ctrl)
-			tt.injector(mockIR)
-			h := &Handlers{itemRepo: mockIR}
-
-			values := url.Values{}
-			for k, v := range tt.args {
-				values.Set(k, v)
+			tmpDir, err := os.MkdirTemp("", "test-images-*")
+			if err != nil {
+				t.Fatalf("failed to create temp dir: %v", err)
 			}
-			req := httptest.NewRequest("POST", "/items", strings.NewReader(values.Encode()))
-			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			defer os.RemoveAll(tmpDir)
 
-			rr := httptest.NewRecorder()
-			h.AddItem(rr, req)
-
-			if tt.wants.code != rr.Code {
-				t.Errorf("expected status code %d, got %d", tt.wants.code, rr.Code)
-			}
-			if tt.wants.code >= 400 {
-				return
+			if _, err := os.Stat(tmpDir); os.IsNotExist(err) {
+				t.Fatalf("temp directory does not exist: %v", err)
 			}
 
-			for _, v := range tt.args {
-				if !strings.Contains(rr.Body.String(), v) {
-					t.Errorf("response body does not contain %s, got: %s", v, rr.Body.String())
+            ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+
+            mockIR := NewMockItemRepository(ctrl)
+            tt.injector(mockIR)
+            h := &Handlers{imgDirPath: tmpDir,itemRepo: mockIR}
+
+			reqbody := &bytes.Buffer{}
+            writer := multipart.NewWriter(reqbody)
+            for k, v := range tt.args {
+                writer.WriteField(k, v)
+            }
+			
+			if tt.imageData != nil {
+				part, err := writer.CreateFormFile("image", "test.jpg")
+				if err != nil {
+					t.Fatalf("failed to create form file: %v", err)
+				}
+				_, err = part.Write(tt.imageData)
+				if err != nil {
+					t.Fatalf("failed to write image data: %v", err)
 				}
 			}
-		})
-	}
-}*/
+			err = writer.Close()
+			if err != nil {
+				t.Fatalf("failed to close writer: %v", err)
+			}
+
+            req := httptest.NewRequest("POST", "/items", reqbody)
+            req.Header.Set("Content-Type", writer.FormDataContentType())
+
+            res := httptest.NewRecorder()
+
+			h.AddItem(res, req)
+
+			if res.Code != tt.wants.code {
+				t.Errorf("expected status code %d, got %d", tt.wants.code, res.Code)
+			}
+        })
+    }
+}
+
 
 // STEP 6-4: uncomment this test
 // func TestAddItemE2e(t *testing.T) {
