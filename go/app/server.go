@@ -13,7 +13,6 @@ import (
 	"strings"
 	"strconv" 
 	"context"
-	"log"
 )
 
 type Server struct {
@@ -104,14 +103,10 @@ func parseAddItemRequest(r *http.Request) (*AddItemRequest, error) {
         return nil, fmt.Errorf("failed to parse form: %w", err)
     }
 
-    log.Printf("Form data: %v", r.Form)
-
     req := &AddItemRequest{
         Name:     r.FormValue("name"),
         Category: r.FormValue("category"),
     }
-
-    log.Printf("Parsing request: Name=%s, Category=%s", req.Name, req.Category)
 
     // Read the image file (Note: this should happen in the AddItem handler, not here)
     imageFile, _, err := r.FormFile("image")
@@ -147,15 +142,12 @@ func (s *Handlers) AddItem(w http.ResponseWriter, r *http.Request) {
         return
     }
 
-    log.Printf("Received item: Name=%s, Category=%s", req.Name, req.Category)
-
     // Save the image
     imageFileName := "default.jpg"
     imagePath := fmt.Sprintf("%s/%s", s.imgDirPath, imageFileName)
 
     err = os.WriteFile(imagePath, req.Image, 0644)
     if err != nil {
-        log.Printf("Error saving image: %v", err)
         http.Error(w, "Failed to save image", http.StatusInternalServerError)
         return
     }
@@ -182,123 +174,6 @@ func (s *Handlers) AddItem(w http.ResponseWriter, r *http.Request) {
     w.Header().Set("Content-Type", "application/json")
     json.NewEncoder(w).Encode(resp)
 }
-
-
-/*
-type AddItemRequest struct {
-	Name			string `json:"name" form:"name"`
-	Category	 	string `json:"category" form:"category"`
-	Image 			[]byte `form:"image`
-}
-
-type AddItemResponse struct {
-	Message string `json:"message"`
-}
-
-// parseAddItemRequest parses and validates the request to add an item.
-func parseAddItemRequest(r *http.Request) (*AddItemRequest, error) {
-    req := &AddItemRequest{
-        Name: r.FormValue("name"),
-		Category: r.FormValue("category"),
-    }
-
-    // read the image
-    file, _, err := r.FormFile("image")
-    if err != nil {
-        log.Printf("Failed to process image: %v", err)  // エラーログ出力
-        return nil, errors.New("failed to read image file") // エラーメッセージを返す
-    }
-    defer file.Close()
-
-    imageData, err := io.ReadAll(file)
-    if err != nil {
-        return nil, errors.New("failed to read image data")
-    }
-    req.Image = imageData
-
-    // input validation
-    if req.Name == "" {
-        return nil, errors.New("name is required")
-    }
-    if req.Category == "" {
-        return nil, errors.New("category_id is required")
-    }
-    return req, nil
-}
-
-// AddItem is a handler to add a new item for POST /items.
-func (s *Handlers) AddItem(w http.ResponseWriter, r *http.Request) {
-    ctx := r.Context()
-
-	err := r.ParseForm()
-	if err != nil {
-		log.Printf("Error parsing form: %v", err)
-		http.Error(w, "Failed to parse form data", http.StatusBadRequest)
-		return
-	}
-	
-
-    // 名前とカテゴリの取得
-    name := r.Form.Get("name")
-    if name == "" {
-        http.Error(w, "name is required", http.StatusBadRequest)
-        return
-    }
-	categoryId := r.Form.Get("category_id")
-    if categoryId == "" {
-        http.Error(w, "categoryId is required", http.StatusBadRequest)
-        return
-    }
-    // 画像ファイルの処理
-    file, _, err := r.FormFile("image")
-    if err != nil {
-        log.Printf("Error processing image: %v", err) // エラーログ
-        http.Error(w, "Unable to process image", http.StatusBadRequest)
-        return
-    }
-    defer file.Close()
-
-	imageFileName := "default.jpg"
-
-    // 画像の保存処理
-    imagePath := fmt.Sprintf("%s/%s", s.imgDirPath, imageFileName)
-    fileBytes, err := io.ReadAll(file)
-    if err != nil {
-        log.Printf("Error reading file: %v", err)
-        http.Error(w, "Failed to read image file", http.StatusInternalServerError)
-        return
-    }
-
-    err = os.WriteFile(imagePath, fileBytes, 0644)
-    if err != nil {
-        log.Printf("Error saving image: %v", err) // エラーログ
-        http.Error(w, err.Error(), http.StatusInternalServerError)
-        return
-    }
-
-    // アイテムを作成
-    items := &Item{
-        Name:          name,
-        Category:      categoryId,
-        ImageFileName: imageFileName,
-    }
-
-    // データベースに挿入
-    err = s.itemRepo.Insert(ctx, items)
-    if err != nil {
-        log.Printf("Error inserting item into database: %v", err) // エラーログ
-        http.Error(w, err.Error(), http.StatusInternalServerError)
-        return
-    }
-
-    // レスポンスとしてアイテム情報を返す
-    resp := map[string]interface{}{
-        "items": items,
-    }
-
-    w.Header().Set("Content-Type", "application/json")
-    json.NewEncoder(w).Encode(resp)
-}*/
 
 
 func (s *Handlers) GetItems(w http.ResponseWriter, r *http.Request) {
