@@ -12,7 +12,6 @@ import (
 	"errors"
 	"database/sql"
 	//"io"
-	"log"
 	"fmt"
 	
 
@@ -28,8 +27,6 @@ func TestParseAddItemRequest(t *testing.T) {
 	if err != nil {
     	t.Fatalf("failed to get current working directory: %v", err)
 	}
-	t.Logf("Current working directory: %s", cwd)
-
 
 	type wants struct {
 		req *AddItemRequest
@@ -39,10 +36,7 @@ func TestParseAddItemRequest(t *testing.T) {
 	imageBytes, err := os.ReadFile("/home/saway/mercari-build-training/go/images/default.jpg")
 	if err != nil {
 		t.Fatalf("failed to read image file: %v", err)
-	} else {
-		t.Log("Image file loaded successfully")
-	}
-
+	} 
 	// STEP 6-1: define test cases
 	cases := map[string]struct {
 		args 		map[string]string
@@ -439,9 +433,6 @@ func TestAddItemE2e(t *testing.T) {
 
 			req.Form.Set("category", fmt.Sprintf("%d", categoryId)) // category_idを設定
 			req.Form.Set("name", tt.args["name"])
-
-            log.Printf("Content-Type: %s", req.Header.Get("Content-Type"))
-            log.Printf("Request Body: %s", body.String())
 
             rr := httptest.NewRecorder()
 
