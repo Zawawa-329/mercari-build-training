@@ -96,37 +96,43 @@ type AddItemResponse struct {
 	Message string `json:"message"`
 }
 
-// parseAddItemRequest parses and validates the request to add an item.
+// parseAddItemRequest parses and validates the incoming request for adding an item.
 func parseAddItemRequest(r *http.Request) (*AddItemRequest, error) {
+    err := r.ParseForm()
+    if err != nil {
+        return nil, fmt.Errorf("failed to parse form: %w", err)
+    }
+
     req := &AddItemRequest{
-        Name: r.FormValue("name"),
-		Category: r.FormValue("category"),
+        Name:     r.FormValue("name"),
+        Category: r.FormValue("category"),
     }
 
-    // read the image
-    file, _, err := r.FormFile("image")
+    // Read the image file (Note: this should happen in the AddItem handler, not here)
+    imageFile, _, err := r.FormFile("image")
     if err != nil {
-        return nil, errors.New("failed to read image file")
+        return nil, fmt.Errorf("failed to retrieve image file: %w", err)
     }
-    defer file.Close()
+    defer imageFile.Close()
 
-    imageData, err := io.ReadAll(file)
+    imageData, err := io.ReadAll(imageFile)
     if err != nil {
-        return nil, errors.New("failed to read image data")
+        return nil, fmt.Errorf("failed to read image data: %w", err)
     }
     req.Image = imageData
 
-    // input validation
+    // Input validation
     if req.Name == "" {
         return nil, errors.New("name is required")
     }
     if req.Category == "" {
-        return nil, errors.New("category_id is required")
+        return nil, errors.New("category is required")
     }
+
     return req, nil
 }
 
-// AddItem is a handler to add a new item for POST /items.
+// AddItem handles the POST request to add a new item
 func (s *Handlers) AddItem(w http.ResponseWriter, r *http.Request) {
     ctx := r.Context()
 
@@ -136,29 +142,33 @@ func (s *Handlers) AddItem(w http.ResponseWriter, r *http.Request) {
         return
     }
 
-    // save the image
-    fileName, err := s.storeImage(req.Image)
+    // Save the image
+    imageFileName := "default.jpg"
+    imagePath := fmt.Sprintf("%s/%s", s.imgDirPath, imageFileName)
+
+    err = os.WriteFile(imagePath, req.Image, 0644)
     if err != nil {
-        http.Error(w, err.Error(), http.StatusInternalServerError)
+        http.Error(w, "Failed to save image", http.StatusInternalServerError)
         return
     }
 
-    // create item
-    items := &Item{
+    // Create the item
+    item := &Item{
         Name:          req.Name,
         Category:      req.Category,
-        ImageFileName: fileName,
+        ImageFileName: imageFileName,
     }
 
-    // insert into the database
-    err = s.itemRepo.Insert(ctx, items)
+    // Insert into the database
+    err = s.itemRepo.Insert(ctx, item)
     if err != nil {
         http.Error(w, err.Error(), http.StatusInternalServerError)
         return
     }
 
+    // Prepare the response
     resp := map[string]interface{}{
-        "items": items,
+        "item": item,
     }
 
     w.Header().Set("Content-Type", "application/json")
