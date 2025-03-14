@@ -1,42 +1,100 @@
 .App {
   text-align: center;
+  font-family: 'Poppins', sans-serif;
+  display: flex;
 }
 
 .Title {
-  background-color: #222427;
+  background-color: #8ad0bb;
   min-height: 8vh;
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: left;
-  font-size: calc(10px + 1vmin);
-  color: white;
+  justify-content: flex-start;
+  font-size: calc(12px + 1vmin);
+  color: #7e412a;
+  border-radius: 10px;
+  padding: 20px;
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.4);
 }
 
 .Listing {
-  background-color: #222427;
-  min-height: 8vh;
+  background-color: transparent;
+  padding: 20px;
+  border-radius: 12px;
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: left;
-  font-size: calc(10px + 1vmin);
-  color: white;
+  justify-content: flex-start;
+  font-size: calc(12px + 1vmin);
+  color: #7e412a;
 }
 
 .ItemList {
-  background-color: #222427;
-  min-height: 8vh;
+  background-color: transparent;
   display: flex;
-  flex-direction: column;
+  flex-wrap: wrap;  
+  justify-content: flex-start;
+  gap: 60px;
+  padding: 20px;
+  margin: 0 auto;
+}
+
+.ItemListItem {
+  width: 200px; 
+  height: 250px;
+  background-color: #8ad0bb;
+  border-radius: 24px;
+  padding: 10px;
+  text-align: center;
+  transition: transform 0.3s ease;
+  display: flex;
+  flex-direction: column; 
   align-items: center;
-  justify-content: left;
-  font-size: calc(10px + 1vmin);
-  color: white;
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.4);
+}
+
+.ItemListItem:hover {
+  transform: translateY(-5px);
+}
+
+.ItemList img {
+  width: 150px;
+  height: 150px;
+  border-radius: 8px;
+  object-fit: cover;
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.);
+}
+
+.ItemList p {
+  font-size: 14px;
+  color: #7e412a;
+  margin-top: 10px;
+}
+
+.Listing input[type="text"], .Listing input[type="file"] {
+  padding: 10px;
+  margin: 8px 0;
+  border-radius: 5px;
+  border: 1px solid #8ad0bb;
+  width: 250px;
+  font-size: 16px;
+}
+
+.Listing button {
+  background-color: #8ad0bb;
+  border: none;
+  color: #7e412a;
+  font-size: 16px;
+  padding: 10px 20px;
+  cursor: pointer;
+  border-radius: 5px;
+  transition: background-color 0.3s ease;
 }
 
 .App-link {
-  color: #61dafb;
+  color: #fffeef;
+  text-decoration: none;
 }
 
 @keyframes App-logo-spin {
@@ -45,5 +103,18 @@
   }
   to {
     transform: rotate(360deg);
+  }
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    color: #213547;
+    background-color: #ffffff;
+  }
+  a:hover {
+    color: #747bff;
+  }
+  button {
+    background-color: #f9f9f9;
   }
 }

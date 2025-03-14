@@ -140,32 +140,29 @@ func (s *Handlers) AddItem(w http.ResponseWriter, r *http.Request) {
         http.Error(w, err.Error(), http.StatusBadRequest)
         return
     }
-
-    // Save the image
-    imageFileName := "default.jpg"
-    imagePath := fmt.Sprintf("%s/%s", s.imgDirPath, imageFileName)
-
-    err = os.WriteFile(imagePath, req.Image, 0644)
+	
+    // ハッシュ化して画像を保存
+    imageFileName, err := s.storeImage(req.Image)
     if err != nil {
         http.Error(w, "Failed to save image", http.StatusInternalServerError)
         return
     }
 
-    // Create the item
+    // アイテム作成
     item := &Item{
         Name:          req.Name,
         Category:      req.Category,
-        ImageFileName: imageFileName,
+        ImageFileName: imageFileName, // ハッシュ化したファイル名を使用
     }
 
-    // Insert into the database
+    // データベースにアイテムを挿入
     err = s.itemRepo.Insert(ctx, item)
     if err != nil {
         http.Error(w, err.Error(), http.StatusInternalServerError)
         return
     }
 
-    // Prepare the response
+    // レスポンスの準備
     resp := map[string]interface{}{
         "item": item,
     }
