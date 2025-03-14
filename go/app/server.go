@@ -98,15 +98,14 @@ type AddItemResponse struct {
 
 // parseAddItemRequest parses and validates the incoming request for adding an item.
 func parseAddItemRequest(r *http.Request) (*AddItemRequest, error) {
-    err := r.ParseForm()
-    if err != nil {
-        return nil, fmt.Errorf("failed to parse form: %w", err)
-    }
-
-    req := &AddItemRequest{
-        Name:     r.FormValue("name"),
-        Category: r.FormValue("category"),
-    }
+    err := r.ParseMultipartForm(10 << 20) // 10MB までのファイルを処理
+	if err != nil {
+    	return nil, fmt.Errorf("failed to parse multipart form: %w", err)
+	}
+	req := &AddItemRequest{
+    	Name:     r.Form.Get("name"), // ここを修正
+    	Category: r.Form.Get("category"),
+	}
 
     // Read the image file (Note: this should happen in the AddItem handler, not here)
     imageFile, _, err := r.FormFile("image")
@@ -361,8 +360,9 @@ func (s *Handlers) GetItem(w http.ResponseWriter, r *http.Request) {
         return
     }
 
+    
     if len(items) > 0 {
-		item := items[0] 
+		item := items[id-1] 
 	
 		resp := Item{
 			ID:             item.ID,
