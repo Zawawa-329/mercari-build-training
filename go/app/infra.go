@@ -79,6 +79,7 @@ func (r *itemRepository) Insert(ctx context.Context, item *Item) error {
 	if err != nil {
 		return fmt.Errorf("failed to get category: %w", err)
 	}
+	
 
 	// Insert new data into items table
 	query := `INSERT INTO items (name, category_id, image_name) VALUES (?, ?, ?)`
