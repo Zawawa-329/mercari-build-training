@@ -24,10 +24,14 @@ a:hover {
 
 body {
   margin: 0;
-  display: flex;
-  place-items: center;
+  flex-direction: column; 
+  margin: 0 auto;
   min-width: 320px;
   min-height: 100vh;
+  background-image: radial-gradient(circle, rgba(126, 65, 42, 0.2) 6px, transparent 2px);
+  background-size: 124px 124px;
+  background-color: #fffeef;
+
 }
 
 h1 {
