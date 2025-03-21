@@ -3,6 +3,13 @@ import { Item, fetchItems } from '~/api';
 
 const PLACEHOLDER_IMAGE = import.meta.env.VITE_FRONTEND_URL + '/logo192.png';
 
+const getImageURL = (imageName: string) => {
+  if (!imageName) {
+    return PLACEHOLDER_IMAGE;
+  }
+  return import.meta.env.VITE_BACKEND_URL + '/images/' + imageName;
+}
+
 interface Prop {
   reload: boolean;
   onLoadCompleted: () => void;
@@ -29,16 +36,19 @@ export const ItemList = ({ reload, onLoadCompleted }: Prop) => {
   }, [reload, onLoadCompleted]);
 
   return (
-    <div>
+    <div className="ItemList">
       {items.map((item) => {
         return (
-          <div key={item.id} className="ItemList">
-            {/* TODO: Task 2: Show item images */}
-            <img src={PLACEHOLDER_IMAGE} />
+          <div key={item.id} className="ItemListItem">
+            <img
+              src={getImageURL(item.image_name)}
+              className="Image"
+              alt={item.name}
+            />
             <p>
-              <span>Name: {item.name}</span>
+              <span><strong>Name:</strong> {item.name}</span>
               <br />
-              <span>Category: {item.category}</span>
+              <span><strong>Category:</strong> {item.category}</span>
             </p>
           </div>
         );
@@ -46,3 +56,4 @@ export const ItemList = ({ reload, onLoadCompleted }: Prop) => {
     </div>
   );
 };
+

@@ -47,6 +47,7 @@ export const Listing = ({ onListingCompleted }: Prop) => {
         setValues(initialState);
       });
   };
+
   return (
     <div className="Listing">
       <form onSubmit={onSubmit}>
@@ -55,7 +56,7 @@ export const Listing = ({ onListingCompleted }: Prop) => {
             type="text"
             name="name"
             id="name"
-            placeholder="name"
+            placeholder="Item name"
             onChange={onValueChange}
             required
           />
@@ -63,7 +64,7 @@ export const Listing = ({ onListingCompleted }: Prop) => {
             type="text"
             name="category"
             id="category"
-            placeholder="category"
+            placeholder="Category"
             onChange={onValueChange}
           />
           <input
